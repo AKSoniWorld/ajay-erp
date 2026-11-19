@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Back-office: white work surfaces, gold hairlines. */
+:root {
+  --canvas: #f6f5f1; --paper: #ffffff; --line: #e3dfd3; --ink: #1a1813; --muted: #6a6558;
+  --gold: #c9a24b; --gold-deep: #84651b; --gold-wash: #f6efdc;
+  --ok: #2b7a50; --warn: #b7791f; --danger: #b03a2a;
+  color-scheme: light;
+}
+/* Counter (POS) mode: black, gold stays the only accent. */
+.counter {
+  --canvas: #0c0b09; --paper: #181510; --line: #2e2920; --ink: #f4efe3; --muted: #a39b87;
+  --gold-deep: #dcb85f; --gold-wash: #26200f; --ok: #5fbf8a; --warn: #e0a940; --danger: #e5705d;
+  color-scheme: dark;
+}
+
+html, body, #root { height: 100%; }
+body { @apply bg-canvas text-ink font-sans antialiased; font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+.num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }

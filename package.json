@@ -1,0 +1,15 @@
+{
+  "name": "ajay-erp",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @ajay/shared && npm run build -w @ajay/api",
+    "dev:api": "npm run build -w @ajay/shared && npm run start:dev -w @ajay/api",
+    "test": "npm run build -w @ajay/shared && npm test -w @ajay/api",
+    "seed": "npm run seed -w @ajay/api",
+    "dev:web": "npm run dev -w @ajay/web"
+  }
+}

@@ -1,0 +1,82 @@
+# Production stack:  docker compose -f docker-compose.prod.yml up -d --build
+# Add the web app (after the frontend phase):  docker compose -f docker-compose.prod.yml --profile web up -d --build
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    command: ["--replSet", "rs0", "--bind_ip_all"]      # a replica set is required for transactions
+    volumes: ["mongo_data:/data/db"]
+    healthcheck:
+      test: >
+        mongosh --quiet --eval "try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongo:27017'}]}).ok }"
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 10s
+    # not published to the host: only the other containers can reach it
+
+  api:
+    build: { context: ., dockerfile: docker/api.Dockerfile }
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      TZ: Asia/Kolkata
+      MONGO_URI: mongodb://mongo:27017/ajay?replicaSet=rs0
+      UPLOAD_DIR: /data/uploads
+      PDF_FONT_DIR: /usr/share/fonts/truetype/noto
+    volumes: ["uploads:/data/uploads"]
+    depends_on:
+      mongo: { condition: service_healthy }
+    expose: ["3000"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  web:
+    profiles: ["web"]
+    build: { context: ., dockerfile: docker/web.Dockerfile }
+    restart: unless-stopped
+    expose: ["80"]
+
+  caddy:                                                 # HTTPS (Let's Encrypt) + routing
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api]
+
+  backup:                                                # daily dump of the database and the uploaded images
+    image: mongo:7
+    restart: unless-stopped
+    depends_on:
+      mongo: { condition: service_healthy }
+    volumes:
+      - ./backups:/backups
+      - uploads:/uploads:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          stamp=$$(date +%F-%H%M)
+          mongodump --uri="mongodb://mongo:27017/ajay?replicaSet=rs0" --archive=/backups/ajay-$$stamp.gz --gzip
+          tar czf /backups/uploads-$$stamp.tgz -C /uploads .
+          find /backups -type f \( -name 'ajay-*.gz' -o -name 'uploads-*.tgz' \) -mtime +$${BACKUP_KEEP_DAYS:-14} -delete
+          sleep 86400
+        done
+
+volumes:
+  mongo_data:
+  uploads:
+  caddy_data:
+  caddy_config:
