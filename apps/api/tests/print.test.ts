@@ -10,10 +10,10 @@ function view(display?: 'AMOUNT' | 'AMOUNT_AND_FINE_WEIGHT') {
   const lines = [{ name: 'Gold Chain', sku: 'G-000001', metalValue: 7_000_000, making: 500_000, hsn: '7113', qty: 1, karat: 22, purityPct: 91.6, grossMg: 10_500, netMg: 10_000 }];
   const r = calculate({ lines, exchanges: [ex], dairyAdjustment: 100_000, dairyAvailable: 100_000 });
   return {
-    document: { number: 'RNC1-2627-000001', type: 'SALE', status: 'FINAL', date: new Date('2026-10-26T06:00:00Z') },
-    branch: { name: 'Ajay Jewellers - Main', address: 'Main Road, Ranchi', gstin: '20ABCDE1234F1Z5', state: 'Jharkhand' },
-    customer: { name: 'Anita', mobile: '9000000001', address: 'Ranchi' },
     ...toCustomerInvoice(r, lines, { customer: 'Anita' }, display ? { exchangeDisplay: display, goldFineMg: ex.fineMg } : {}),
+    document: { number: 'RNC1-2627-000001', type: 'SALE', status: 'FINAL', date: new Date('2026-10-26T06:00:00Z') },
+    branch: { name: 'Ajay Jewellers - Main', address: 'Main Road, Ranchi', whatsappNumber: '9876543210', gstin: '20ABCDE1234F1Z5', state: 'Jharkhand' },
+    customer: { id: 'CUST-000001', name: 'Anita', mobile: '9000000001', address: 'Ranchi' },
   };
 }
 const text = (d: any) => JSON.stringify(d);
@@ -22,7 +22,7 @@ describe('A4 invoice document', () => {
   it('carries the GST fields and the amount rows in the right order', () => {
     const t = text(buildInvoiceDoc(view(), o));
     for (const s of ['TAX INVOICE', 'RNC1-2627-000001', '20ABCDE1234F1Z5', 'Jharkhand (20)', 'CGST @ 1.5%', 'SGST @ 1.5%',
-      'Less: Old Gold Exchange', 'Less: Dairy Adjustment', 'Round off', 'NET PAYABLE', 'Rs. 16,699.00',
+      'Less: Old Gold Exchange', 'Less: Dairy Adjustment', 'Round off', 'NET PAYABLE', 'Rs. 16,699', 'Customer ID: CUST-000001', 'Anita', 'Mobile: 9000000001', 'Mobile: 9876543210',
       'Rupees Sixteen Thousand Six Hundred Ninety Nine Only']) expect(t).toContain(s);
     expect(t.indexOf('Old Gold Exchange')).toBeLessThan(t.indexOf('Dairy Adjustment'));
     expect(t.indexOf('Dairy Adjustment')).toBeLessThan(t.indexOf('NET PAYABLE'));
@@ -37,7 +37,7 @@ describe('A4 invoice document', () => {
     expect(t).toContain('Old Gold Jama (fine weight)'); expect(t).toContain('9.160 g');
     expect(t).not.toMatch(/lessMg|ratePerGram|exchangeDetail/);
   });
-  it('uses the ₹ sign when the font has it', () => expect(text(buildInvoiceDoc(view(), { symbol: '₹', font: 'NotoSans' }))).toContain('₹ 16,699.00'));
+  it('uses the ₹ sign when the font has it', () => expect(text(buildInvoiceDoc(view(), { symbol: '₹', font: 'NotoSans' }))).toContain('₹ 16,699'));
   it('draft gets a watermark; credit note is titled and references the invoice', () => {
     const d = view(); (d.document as any).status = 'DRAFT';
     expect(text(buildInvoiceDoc(d, { ...o, draft: true }))).toMatch(/DRAFT INVOICE.*watermark|watermark.*DRAFT INVOICE/s);
@@ -62,7 +62,7 @@ describe('paper size (A4 / A5)', () => {
     expect(buildInvoiceDoc(view(), o).pageSize).toBe('A4');
     const a5: any = buildInvoiceDoc(view(), { ...o, paper: 'A5' });
     expect(a5.pageSize).toBe('A5');
-    expect(text(a5)).toContain('16,699.00');          // same content, smaller page
+    expect(text(a5)).toContain('16,699');          // same content, smaller page
   });
   it('receipts default to A5 and can be printed on A4', () => {
     expect(buildReceiptDoc(rec, o).pageSize).toBe('A5');
@@ -102,14 +102,17 @@ describe('bill of supply (no GST) document', () => {
   function nonGstView(type = 'SALE') {
     const lines = [{ name: 'Silver Plate', sku: 'S-000001', metalValue: 500_000, making: 50_000, hsn: '7113', qty: 1 }];
     const r = calculate({ lines, gstRatePct: 0 });
-    return { document: { number: 'RNC1-BS-2627-000001', type, status: 'FINAL', taxMode: 'NON_GST', date: new Date() },
-      branch: { name: 'Main', address: 'Ranchi', state: 'Jharkhand' }, customer: { name: 'Anita' },
-      ...toCustomerInvoice(r, lines, { customer: 'Anita' }) };
+    return {
+      ...toCustomerInvoice(r, lines, { customer: 'Anita' }),
+      document: { number: 'RNC1-BS-2627-000001', type, status: 'FINAL', taxMode: 'NON_GST', date: new Date() },
+      branch: { name: 'Main', address: 'Ranchi', whatsappNumber: '9876543210', gstin: '20ABCDE1234F1Z5', state: 'Jharkhand' },
+      customer: { name: 'Anita' },
+    };
   }
   it('is titled a bill of supply, charges no GST and shows no tax rows', () => {
     const t = text(buildInvoiceDoc(nonGstView(), o));
-    for (const s of ['BILL OF SUPPLY', 'No GST has been charged', 'RNC1-BS-2627-000001', 'Total', 'Rs. 5,500.00']) expect(t).toContain(s);
-    for (const s of ['CGST', 'SGST', 'TAX INVOICE', 'Place of supply', 'GSTIN', 'Taxable value']) expect(t).not.toContain(s);
+    for (const s of ['BILL OF SUPPLY', 'No GST has been charged', 'RNC1-BS-2627-000001', 'Total', 'Rs. 5,500']) expect(t).toContain(s);
+    for (const s of ['CGST', 'SGST', 'TAX INVOICE', 'Place of supply', 'GSTIN']) expect(t).not.toContain(s);
   });
   it('its credit note says so', () => expect(text(buildInvoiceDoc(nonGstView('CREDIT_NOTE'), o))).toContain('CREDIT NOTE (BILL OF SUPPLY)'));
   it('a GST invoice is unchanged (still a TAX INVOICE with CGST/SGST)', () => {

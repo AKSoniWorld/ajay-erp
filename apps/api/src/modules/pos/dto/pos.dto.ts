@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+﻿import { Type } from 'class-transformer';
 import {
   ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDate, IsIn, IsInt, IsMongoId, IsOptional, IsString, IsUUID, Max, MaxLength, Min,
   MinLength, ValidateNested,
@@ -18,6 +18,8 @@ export class QuoteDto {
   @IsOptional() @IsMongoId() customerId?: string;
   @IsOptional() @IsArray() @ArrayMaxSize(3) @ValidateNested({ each: true }) @Type(() => DairyUseDto) dairy?: DairyUseDto[];
   @IsOptional() @IsInt() @Min(0) advancePaise?: number;   // customer advance to apply
+  @IsOptional() @IsInt() @Min(0) @Max(Number.MAX_SAFE_INTEGER) discountPaise?: number; // fixed discount in paise
+  @IsOptional() @IsIn(['GST', 'NON_GST']) taxMode?: 'GST' | 'NON_GST';
 }
 export class CreateDraftDto extends QuoteDto {
   @IsOptional() @IsMongoId() customerId?: string;
@@ -31,6 +33,8 @@ export class UpdateDraftDto {
   @IsOptional() @IsArray() @ArrayMaxSize(10) @ValidateNested({ each: true }) @Type(() => ExchangeItemDto) exchanges?: ExchangeItemDto[]; // [] clears
   @IsOptional() @IsArray() @ArrayMaxSize(3) @ValidateNested({ each: true }) @Type(() => DairyUseDto) dairy?: DairyUseDto[]; // [] clears
   @IsOptional() @IsInt() @Min(0) advancePaise?: number;
+  @IsOptional() @IsInt() @Min(0) @Max(Number.MAX_SAFE_INTEGER) discountPaise?: number;
+  @IsOptional() @IsIn(['GST', 'NON_GST']) taxMode?: 'GST' | 'NON_GST';
 }
 export class PaymentDto {
   @IsIn(['CASH', 'UPI', 'CARD']) mode: 'CASH' | 'UPI' | 'CARD';

@@ -34,6 +34,8 @@ export function PosPage() {
   const [exRows, setExRows] = useState<ExRow[]>([]);
   const [dairyRows, setDairyRows] = useState<DairyRow[]>([]);
   const [advText, setAdvText] = useState('');
+  const [discountText, setDiscountText] = useState('');
+  const [taxMode, setTaxMode] = useState<'GST' | 'NON_GST'>('GST');
   const [pay, setPay] = useState<PayRow[]>(freshPay());
   const [allowDue, setAllowDue] = useState(false);
   const [draftId, setDraftId] = useState<string | null>(null);
@@ -41,9 +43,10 @@ export function PosPage() {
   const [notice, setNotice] = useState(''), [provPaper, setProvPaper] = useState<'' | 'A4' | 'A5'>('');
   const searchRef = useRef<HTMLInputElement>(null), customerRef = useRef<HTMLInputElement>(null), payRef = useRef<HTMLInputElement>(null);
   const exRef = useRef<HTMLInputElement>(null), dairyRef = useRef<HTMLInputElement>(null);
-  const gst = branch?.gstRegistered !== false;
+  const gst = taxMode === 'GST';
   const savedCustomer = !!customer && !customer.isNew;
 
+  useEffect(() => { if (branch) setTaxMode(branch.gstRegistered === false ? 'NON_GST' : 'GST'); }, [branch?._id, branch?.gstRegistered]);
   useEffect(() => { if (online) setForceLocal(false); }, [online]);
   useEffect(() => { if (local) setAdvText(''); }, [local]);       // advance balances are only known online
 
@@ -62,10 +65,11 @@ export function PosPage() {
     return [{ schemeId: r.schemeId, amountPaise: amt, ...(s.forfeitsBonusIfUsed && { confirmForfeitBonus: true }) }];
   }), [dairyRows, schemes]);
   const advanceReq = Math.min(rupeesToPaise(num(advText)), advanceBal);
+  const discountReq = rupeesToPaise(Math.max(0, num(discountText)));
   const body = useMemo(() => (branch && cart.length ? {
     branchId: branch._id, ...(savedCustomer && { customerId: customer!._id }), lines: cart.map(l => ({ productId: l.productId, qty: l.qty })),
-    ...(exchangesBody.length && { exchanges: exchangesBody }), ...(dairyBody.length && { dairy: dairyBody }), ...(advanceReq > 0 && { advancePaise: advanceReq }),
-  } : null), [branch, cart, customer, savedCustomer, exchangesBody, dairyBody, advanceReq]);
+    ...(exchangesBody.length && { exchanges: exchangesBody }), ...(dairyBody.length && { dairy: dairyBody }), ...(advanceReq > 0 && { advancePaise: advanceReq }), ...(discountReq > 0 && { discountPaise: discountReq }), taxMode,
+  } : null), [branch, cart, customer, savedCustomer, exchangesBody, dairyBody, advanceReq, discountReq, taxMode]);
 
   // ---- pricing: the server when connected (authoritative); the same rules run on this device when offline ----
   const serverQuote = useQuery({ queryKey: ['pos-quote', body], queryFn: () => api('/pos/quote', { body }), enabled: !!body && !local, retry: false, placeholderData: keepPreviousData });
@@ -78,9 +82,9 @@ export function PosPage() {
       const total = dairyBody.reduce((s, d) => s + d.amountPaise, 0);
       const available = dairyBody.reduce((s, d) => s + (schemes.find(x => x.schemeId === d.schemeId)?.balancePaise ?? 0), 0);
       return { data: buildQuote({ products: pricing.data.products, saleRates: rateMap(pricing.data.rates, 'SALE'), exchangeRates: rateMap(pricing.data.rates, 'EXCHANGE'),
-        lines: body.lines, exchanges: exchangesBody, dairyAdjustment: total, dairyAvailable: available, taxMode: gst ? 'GST' : 'NON_GST' }), error: null as Error | null };
+        lines: body.lines, exchanges: exchangesBody, dairyAdjustment: total, dairyAvailable: available, discountPaise: discountReq, taxMode }), error: null as Error | null };
     } catch (e) { return { data: undefined, error: e as Error }; }
-  }, [local, body, pricing.data, dairyBody, schemes, exchangesBody, gst]);
+  }, [local, body, pricing.data, dairyBody, schemes, exchangesBody, taxMode, discountReq]);
   const qData: any = local ? localQuote?.data : serverQuote.data;
   const qError: Error | null = local ? localQuote?.error ?? null : serverQuote.isError && !(serverQuote.error instanceof TypeError) ? (serverQuote.error as Error) : null;
   const qBusy = local ? pricing.isLoading : serverQuote.isFetching;
@@ -119,7 +123,7 @@ export function PosPage() {
         const provisionalNo = await nextProvisionalNo(), due = allowDue && canLeaveDue ? left : 0;
         await enqueue('SALE', {
           branchId: branch!._id, ...(customer!.isNew ? { customer: { name: customer!.name, mobile: customer!.mobile } } : { customerId: customer!._id }),
-          lines, ...(exchangesBody.length && { exchanges: exchangesBody }), ...(dairyBody.length && { dairy: dairyBody }),
+          lines, ...(exchangesBody.length && { exchanges: exchangesBody }), ...(dairyBody.length && { dairy: dairyBody }), ...(discountReq > 0 && { discountPaise: discountReq }), taxMode,
           payments, ...(due > 0 && { allowDue: true }), clientTotals: { finalPayable: payable }, offlineAt: new Date().toISOString(), provisionalNo,
         }, { label: `${customer!.name} · ${cart.length} item${cart.length > 1 ? 's' : ''}`, amountPaise: payable, provisionalNo });
         await applyLocalSale(branch!._id, cart, dairyBody);
@@ -131,7 +135,7 @@ export function PosPage() {
           lines: cart.map(l => ({ name: l.name, qty: l.qty, amountPaise: lineAmount(l.productId) ?? 0 })), totals: t, gst, payments, duePaise: due,
           ...(showFine && { fineGoldMg: fine('GOLD'), fineSilverMg: fine('SILVER') }) } };
       }
-      const extra = { exchanges: exchangesBody, dairy: dairyBody, advancePaise: advanceReq };
+      const extra = { exchanges: exchangesBody, dairy: dairyBody, advancePaise: advanceReq, discountPaise: discountReq, taxMode };
       let id = draftId;
       if (id) await api(`/pos/invoices/${id}`, { method: 'PATCH', body: { customerId: customer!._id, lines, ...extra } });
       else { const d = await api('/pos/invoices', { body: { branchId: branch!._id, customerId: customer!._id, lines, ...extra } }); id = d._id as string; setDraftId(id); }
@@ -144,7 +148,7 @@ export function PosPage() {
   const finishError = finish.error instanceof TypeError ? 'No connection to the server. Press Finish again — the bill will be saved on this device and sent later.' : (finish.error as Error | null)?.message;
 
   const reset = () => {
-    setCart([]); setCustomer(null); setExRows([]); setDairyRows([]); setAdvText(''); setPay(freshPay()); setAllowDue(false);
+    setCart([]); setCustomer(null); setExRows([]); setDairyRows([]); setAdvText(''); setDiscountText(''); setTaxMode(branch?.gstRegistered === false ? 'NON_GST' : 'GST'); setPay(freshPay()); setAllowDue(false);
     setDraftId(null); setDone(null); setNotice(''); finish.reset(); setTimeout(() => searchRef.current?.focus(), 0);
   };
 
@@ -224,10 +228,32 @@ export function PosPage() {
 
         {/* totals and payment */}
         <section className="flex min-h-0 flex-col overflow-y-auto p-4">
-          <div className="text-xs text-muted">{gst ? 'GST invoice' : 'Bill of supply — no GST'}{local ? ' · price worked out on this device' : ''}</div>
-          <dl className="mt-2 space-y-1 text-sm">
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => setTaxMode('GST')} className={`rounded-md border px-3 py-2 text-sm font-medium ${gst ? 'border-gold text-gold-deep' : 'border-line bg-surface text-muted'}`}>
+              GST BILL
+            </button>
+            <button type="button" onClick={() => setTaxMode('NON_GST')} className={`rounded-md border px-3 py-2 text-sm font-medium ${!gst ? 'border-gold text-gold-deep' : 'border-line bg-surface text-muted'}`}>
+              WITHOUT GST
+            </button>
+          </div>
+          <div className="mt-1 text-xs text-muted">{gst ? 'GST will be calculated and GSTIN printed.' : 'No GST will be charged; Bill of Supply.'}{local ? ' � price worked out on this device' : ''}</div>
+          <label className="mt-3 block text-sm">
+            <span className="mb-1 block font-medium">Fixed discount (₹)</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              inputMode="decimal"
+              value={discountText}
+              onChange={e => setDiscountText(e.target.value)}
+              placeholder="Enter discount in rupees"
+              className="w-full rounded-md border border-line bg-surface px-3 py-2"
+            />
+          </label>
+          <dl className="mt-3 space-y-1 text-sm">
             <Row k="Jewellery" v={t ? t.jewellery : null} />
             <Row k="Making charges" v={t ? t.making : null} />
+            {discountReq > 0 && <Row k="Discount" v={-discountReq} />}
             {gst && <Row k="GST" v={t ? t.gst : null} />}
             {t && t.goldExchange > 0 && <Row k="Old gold" v={-t.goldExchange} />}
             {t && t.silverExchange > 0 && <Row k="Old silver" v={-t.silverExchange} />}

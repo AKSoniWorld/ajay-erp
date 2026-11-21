@@ -40,8 +40,8 @@ These are the decisions you gave while specifying the system, as the code applie
 ## 7. Customer accounts (kept separately)
 **Advance** (money we hold), **Due** (money they owe), **Dairy**, **Purchases** (net of returns) and **Old metal** (internal). A due arises only when an Owner or the Admin allows a bill to be part-paid; sales staff cannot leave a due. Each receipt is numbered. Only the Admin can correct or write off a balance.
 
-## 8. Cash limit (Sec 269ST) // NEED CORRECTION
-Cash received from one customer in one day — bill payments, dairy instalments, advances and dues **together** — may not reach ₹2,00,000. The system refuses the payment that would take the total there. Please confirm this rule with your CA.
+## 8. NO Cash limit
+Cash received from one customer in one day — bill payments, dairy instalments, advances and dues **together** — HAS NO Cash limit
 
 ## 9. Suppliers
 - Three separate balances: **cash**, **fine gold**, **fine silver**. Positive = we owe them; negative = they owe us (paid ahead).
@@ -63,11 +63,10 @@ QR only (no barcode). The QR holds `AJ:<SKU>`. Tag sizes 40×25 mm and 50×25 mm
 Admin: everything, all branches. Owner (own branches): bills, products, stock, transfers (create **and** approve), purchases, suppliers, dairy (create and collect), credit notes, reports for the branch. Sales staff: make bills, collect dairy instalments, see products and their own bills and sales. Admin only: rates, branches, staff, audit trail, head-office overview, all-branch reports, dairy/customer/supplier balance corrections, purchase cancellation. Exact table: `packages/shared/src/index.ts`.
 
 ## 13. Public catalog
-No prices, making charges, costs or exact quantities ever leave the server for the public pages. Customers see the piece, its karat and weight, which shop has it, and a WhatsApp button.
+NO METAL prices, making charges, costs or exact quantities ever leave the server for the public pages. Customers see the piece, its karat and weight AND TOTAL PRICE, which shop has it, and a WhatsApp button.
 
 ## Open questions (not decided yet)
-1. **Wastage** on supplier work: should it be tracked (a % added to what we owe in fine metal)? Not built.
-2. **Hindi labels** for the counter screens: not built; fonts and layout are ready.
-3. **Dairy instalments offline**: the server can accept them later, the screen currently needs the internet.
-4. **Sec 269ST wording and the ₹2 lakh limit**: confirm with your CA.
-5. **Thermal bill printing**: bills and receipts are A4/A5 PDFs; no 80 mm receipt printer route.
+1. **Wastage** on supplier work: should it be tracked (a % added to what we owe in fine metal)? Not built.: LETS BUILD
+2. **Hindi labels** for the counter screens: not built; fonts and layout are ready. : REQUIRED
+3. **Dairy instalments offline**: the server can accept them later, the screen currently needs the internet.: LETS BUILD
+5. **Thermal bill printing**: bills and receipts are A4/A5 PDFs; no 80 mm receipt printer route.: LETS BUILD

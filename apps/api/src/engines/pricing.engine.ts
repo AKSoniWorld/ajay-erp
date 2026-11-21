@@ -10,7 +10,7 @@ export interface ExchangeItem {
   grossMg: number; lessMg: number;
   purityPct: number;            // tested purity of the old metal, e.g. 91.6
   ratePerGramPaise: Paise;      // admin-controlled EXCHANGE rate (gold: 22K rate; silver: silver rate)
-  remarks?: string;
+  remarks?: string | null;
 }
 export interface PricingInput {
   lines: InvoiceLine[];
@@ -18,6 +18,7 @@ export interface PricingInput {
   exchanges?: ExchangeItem[];
   dairyAdjustment?: Paise;      // requested
   dairyAvailable?: Paise;       // ledger balance usable
+  discountPaise?: Paise;        // fixed discount, deducted before GST
 }
 
 export const roundToRupee = (paise: Paise): Paise => Math.round(paise / 100) * 100;
@@ -26,16 +27,22 @@ export const netMg = (e: ExchangeItem) => {
   if (e.lessMg < 0 || e.lessMg > e.grossMg) throw new Error('Invalid less weight');
   return e.grossMg - e.lessMg;
 };
-/** Fine weight (mg) = net weight × purity %. */
+/** Fine weight (mg) = net weight Ã— purity %. */
 export const fineMg = (e: ExchangeItem) => Math.round((netMg(e) * e.purityPct) / 100);
-/** Old-metal value = fine weight × exchange rate. */
+/** Old-metal value = fine weight Ã— exchange rate. */
 export const exchangeValue = (e: ExchangeItem): Paise => Math.round((fineMg(e) * e.ratePerGramPaise) / 1000);
 
 export function calculate(input: PricingInput) {
   const gstRate = input.gstRatePct ?? 3;
   const jewellery = input.lines.reduce((s, l) => s + l.metalValue, 0);
   const making = input.lines.reduce((s, l) => s + l.making, 0);
-  const taxable = jewellery + making;
+  const taxableBeforeDiscount = jewellery + making;
+  const discountPaise = input.discountPaise ?? 0;
+  if (!Number.isSafeInteger(discountPaise) || discountPaise < 0)
+    throw new Error('Discount must be a non-negative whole amount in paise');
+  if (discountPaise > taxableBeforeDiscount)
+    throw new Error('Discount cannot exceed the taxable bill amount');
+  const taxable = taxableBeforeDiscount - discountPaise;
   const gst = Math.round((taxable * gstRate) / 100);
   const cgst = Math.floor(gst / 2), sgst = gst - cgst; // intra-state (Jharkhand)
   const grossTotal = taxable + gst;
@@ -55,7 +62,7 @@ export function calculate(input: PricingInput) {
   const roundOff = finalPayable - exactPayable; // paise, can be negative
 
   return {
-    jewellery, making, taxable, gstRate, cgst, sgst, gst, grossTotal,
+    jewellery, making, taxableBeforeDiscount, discountPaise, taxable, gstRate, cgst, sgst, gst, grossTotal,
     goldExchange, silverExchange, subtotal, dairy, exactPayable, roundOff, finalPayable,
     exchangeDetail: ex.map(e => ({ ...e, netMg: netMg(e), fineMg: fineMg(e), value: exchangeValue(e) })), // INTERNAL ONLY
   };
@@ -77,10 +84,13 @@ export function toCustomerInvoice(r: ReturnType<typeof calculate>, lines: Invoic
       ...(l.netMg !== undefined && { netWeightMg: l.netMg }),
       amount: l.metalValue + l.making,
     })),
+    taxableBeforeDiscount: r.taxableBeforeDiscount,
+    discountPaise: r.discountPaise,
+    taxable: r.taxable,
     gst: { cgst: r.cgst, sgst: r.sgst, total: r.gst, ratePct: r.gstRate },
     oldGoldExchange: r.goldExchange,     // amount only
     oldSilverExchange: r.silverExchange, // amount only
-    // Optional per-branch: total FINE weight ("jama") only — never gross/less/net weight, purity or rate.
+    // Optional per-branch: total FINE weight ("jama") only â€” never gross/less/net weight, purity or rate.
     ...(opts.exchangeDisplay === 'AMOUNT_AND_FINE_WEIGHT' &&
       { oldGoldFineWeightMg: opts.goldFineMg ?? 0, oldSilverFineWeightMg: opts.silverFineMg ?? 0 }),
     dairyAdjustment: r.dairy,            // amount only

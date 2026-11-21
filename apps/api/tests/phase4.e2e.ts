@@ -87,7 +87,9 @@ describe('Phase 4 – finalize with old gold', () => {
     expect(ex.body.total).toBe(1);
     expect(ex.body.items[0]).toMatchObject({ invoiceNumber: ok.body.number, totals: { goldNetMg: 10_000, goldFineMg: 9_160, goldValuePaise: EX_VALUE } });
     expect(await raw()).toEqual([expect.objectContaining({ metal: 'GOLD', netMg: 10_000, fineMg: 9_160 })]);
+
     expect((await http().get(`/api/v1/pos/invoices/${invX}/verify`).set(auth(owner))).body.ok).toBe(true);
+
   });
   it('exchange records are internal: staff cannot list them', async () => {
     await http().get('/api/v1/exchange').set(auth(staff)).expect(403);

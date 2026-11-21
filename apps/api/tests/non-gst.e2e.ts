@@ -64,8 +64,12 @@ describe('Invoice type follows the branch registration', () => {
     expect((await quote(staffB, branchB).expect(200)).body.totals)
       .toMatchObject({ gst: 0, cgst: 0, sgst: 0, grossTotal: NO_GST, finalPayable: NO_GST, roundOff: 0 });
   });
-  it('there is no per-bill GST choice: the request cannot carry one', async () => {
-    await quote(staffA, branchA, { taxMode: 'NON_GST' }).expect(400);
+  it('allows GST or without-GST choice on a registered branch', async () => {
+    const nonGst = await quote(staffA, branchA, { taxMode: 'NON_GST' }).expect(200);
+    expect(nonGst.body).toMatchObject({
+      taxMode: 'NON_GST',
+      totals: { gst: 0, cgst: 0, sgst: 0, finalPayable: NO_GST },
+    });
     await quote(staffB, branchB, { taxMode: 'GST' }).expect(400);
   });
   it('registration rules: unregistered ⇒ no GSTIN; registered-after ⇒ GSTIN required; admin only', async () => {
@@ -105,15 +109,31 @@ describe('Numbering, documents and filters', () => {
 });
 
 describe('Registration changes', () => {
-  it('a draft saved under the old status must be re-saved before it can be finalized', async () => {
+  it('keeps a draft tax choice when branch registration changes', async () => {
     const id = (await draft(staffB, branchB).expect(201)).body._id;
-    await patchBranch(branchB, { gstRegistered: true, gstin: '20ABCDE1234F1Z5' }).expect(200);   // branch registers for GST
-    const r = await finalize(staffB, id, NO_GST).expect(409);
-    expect(r.body.code).toBe('TAX_MODE_CHANGED');
-    const re = await http().patch(`/api/v1/pos/invoices/${id}`).set(auth(staffB)).send({ remarks: 're-saved' }).expect(200);
-    expect(re.body).toMatchObject({ taxMode: 'GST' });
-    expect(re.body.totals).toMatchObject({ gst: 225_000, finalPayable: WITH_GST });
-    expect((await finalize(staffB, id, WITH_GST).expect(200)).body.number).toBe(`UNR1-${fy}-000001`);
+    expect((await http().get(`/api/v1/pos/invoices/${id}`).set(auth(staffB))).body.taxMode).toBe('NON_GST');
+
+    await patchBranch(branchB, { gstRegistered: true, gstin: '20ABCDE1234F1Z5' }).expect(200);
+
+    const finalized = await finalize(staffB, id, NO_GST).expect(200);
+    expect(finalized.body).toMatchObject({
+      taxMode: 'NON_GST',
+      status: 'FINAL',
+      number: `UNR1-BS-${fy}-000002`,
+      totals: { gst: 0, finalPayable: NO_GST },
+    });
+
+    const defaultQuote = await quote(staffB, branchB).expect(200);
+    expect(defaultQuote.body).toMatchObject({
+      taxMode: 'GST',
+      totals: { gst: 225_000, finalPayable: WITH_GST },
+    });
+
+    const noGstQuote = await quote(staffB, branchB, { taxMode: 'NON_GST' }).expect(200);
+    expect(noGstQuote.body).toMatchObject({
+      taxMode: 'NON_GST',
+      totals: { gst: 0, finalPayable: NO_GST },
+    });
   });
   it('old bills keep their type, and so do their credit notes', async () => {
     const cn = await http().post(`/api/v1/pos/invoices/${bosInvoice}/credit-note`).set(auth(admin))

@@ -78,20 +78,27 @@ export class PosService {
     return inv;
   }
 
-  // ---------------- invoice type comes from the branch ----------------
-  /** GST-registered branch → GST tax invoice. Unregistered branch → bill of supply (no GST). There is no per-bill choice. */
+  // ---------------- invoice tax mode ----------------
+/** Registered branch: GST by default; each bill may use GST or NON_GST. Unregistered branch: NON_GST only. */
   private async taxModeFor(branchId: string): Promise<'GST' | 'NON_GST'> {
     const b = await this.branches.findOne(branchId);
     return b.gstRegistered === false ? 'NON_GST' : 'GST';
   }
 
+  private async assertTaxModeAllowed(branchId: string, taxMode: 'GST' | 'NON_GST') {
+    if (taxMode !== 'GST') return;
+    const b = await this.branches.findOne(branchId);
+    if (b.gstRegistered === false) {
+      throw new BadRequestException('GST cannot be selected for an unregistered branch');
+    }
+  }
   // ---------------- pricing ----------------
   /**
    * Server-side pricing from current products + rates. Client totals/rates are never trusted.
-   * Sale lines: net weight × grade rate. Old metal: fine weight (net × purity%) × exchange rate.
+   * Sale lines: net weight Ãƒâ€” grade rate. Old metal: fine weight (net Ãƒâ€” purity%) Ãƒâ€” exchange rate.
    */
   private async build(items: LineDto[], exchangeInputs: ExchangeInput[] = [], dairyInputs: DairyUseDto[] = [], advancePaise = 0,
-    session?: ClientSession, customerId?: string, taxMode: 'GST' | 'NON_GST' = 'GST', asOf?: Date) {
+    session?: ClientSession, customerId?: string, taxMode: 'GST' | 'NON_GST' = 'GST', asOf?: Date, discountPaise = 0) {
     const ids = items.map(i => i.productId);
     if (new Set(ids).size !== ids.length) throw new BadRequestException('Duplicate product lines; increase qty instead');
     const prods = await this.products.find({ _id: { $in: ids } }).session(session ?? null).lean();
@@ -118,13 +125,13 @@ export class PosService {
     try { exchanges = priceExchangeItems(exchangeInputs, exRates); }
     catch (e: any) { throw new BadRequestException(e.message); }
 
-    // Dairy comes last in the calculation order: subtotal (after old metal) → minus dairy → final payable
+    // Dairy comes last in the calculation order: subtotal (after old metal) Ã¢â€ â€™ minus dairy Ã¢â€ â€™ final payable
     const dairyCheck = await this.dairy.checkUse(dairyInputs, customerId, session);
     let calc;
     try {
       calc = calculate({
         lines: lines.map(l => ({ name: l.name, sku: l.sku, metalValue: l.metalValue + l.stoneValue, making: l.making })),
-        exchanges, dairyAdjustment: dairyCheck.total, dairyAvailable: dairyCheck.available,
+        exchanges, dairyAdjustment: dairyCheck.total, dairyAvailable: dairyCheck.available, discountPaise,
         gstRatePct: taxMode === 'NON_GST' ? 0 : undefined,
       });
     } catch (e: any) { throw new BadRequestException(e.message); }
@@ -142,7 +149,11 @@ export class PosService {
 
   async quote(dto: QuoteDto, user: AuthUser) {
     await this.assertBranch(user, dto.branchId);
-    return this.build(dto.lines, dto.exchanges, dto.dairy, dto.advancePaise, undefined, dto.customerId, await this.taxModeFor(dto.branchId));
+    const taxMode = dto.taxMode ?? await this.taxModeFor(dto.branchId);
+    await this.assertTaxModeAllowed(dto.branchId, taxMode);
+    const result = await this.build(dto.lines, dto.exchanges, dto.dairy, dto.advancePaise, undefined, dto.customerId,
+      taxMode, undefined, dto.discountPaise ?? 0);
+    return { ...result, taxMode };
   }
 
   async search(q: SearchQueryDto, user: AuthUser) {
@@ -166,8 +177,10 @@ export class PosService {
       if (existing) { this.assertAccess(user, existing); return existing; } // idempotent retry
     }
     if (dto.customerId) await this.customers.findOne(dto.customerId);
-    const taxMode = await this.taxModeFor(dto.branchId);
-    const b = await this.build(dto.lines, dto.exchanges, dto.dairy, dto.advancePaise, undefined, dto.customerId, taxMode, opts.asOf);
+    const taxMode = dto.taxMode ?? await this.taxModeFor(dto.branchId);
+    await this.assertTaxModeAllowed(dto.branchId, taxMode);
+    const b = await this.build(dto.lines, dto.exchanges, dto.dairy, dto.advancePaise, undefined, dto.customerId,
+      taxMode, opts.asOf, dto.discountPaise ?? 0);
     return this.model.create({
       branchId: new Types.ObjectId(dto.branchId), customerId: dto.customerId && new Types.ObjectId(dto.customerId),
       ...b, taxMode, remarks: dto.remarks, clientUuid: dto.clientUuid, createdBy: new Types.ObjectId(user.id),
@@ -181,16 +194,18 @@ export class PosService {
     let push: Record<string, unknown> | undefined;
     if (dto.customerId) { await this.customers.findOne(dto.customerId); set.customerId = new Types.ObjectId(dto.customerId); }
     if (dto.remarks !== undefined) set.remarks = dto.remarks;
-    // Re-saving always re-prices when the branch's GST registration changed since the draft was made
-    const modeChanged = (await this.taxModeFor(String(inv.branchId))) !== (inv.taxMode ?? 'GST');
-    if (modeChanged || dto.lines || dto.exchanges !== undefined || dto.dairy !== undefined || dto.advancePaise !== undefined || dto.customerId) {
+    const branchTaxMode = await this.taxModeFor(String(inv.branchId));
+    if (dto.taxMode !== undefined || dto.lines || dto.exchanges !== undefined || dto.dairy !== undefined || dto.advancePaise !== undefined || dto.discountPaise !== undefined || dto.customerId) {
       const lineInputs = dto.lines ?? inv.lines.map(l => ({ productId: String(l.productId), qty: l.qty }));
       const exInputs = dto.exchanges !== undefined ? dto.exchanges : toExInputs(inv.exchanges);
       const dairyInputs = dto.dairy !== undefined ? dto.dairy : (inv.dairy ?? []);
       const customerId = dto.customerId ?? (inv.customerId ? String(inv.customerId) : undefined);
       const advanceIn = dto.advancePaise !== undefined ? dto.advancePaise : (inv.advancePaise ?? 0);
-      const taxMode = await this.taxModeFor(String(inv.branchId));   // re-saving picks up the branch's current registration
-      Object.assign(set, await this.build(lineInputs, exInputs, dairyInputs, advanceIn, undefined, customerId, taxMode), { taxMode }); // always re-priced
+      const discountIn = dto.discountPaise !== undefined ? dto.discountPaise : (inv.totals?.discountPaise ?? 0);
+      const taxMode = dto.taxMode ?? inv.taxMode ?? branchTaxMode;
+      if (dto.taxMode !== undefined) await this.assertTaxModeAllowed(String(inv.branchId), taxMode);
+      Object.assign(set, await this.build(lineInputs, exInputs, dairyInputs, advanceIn, undefined, customerId,
+        taxMode, undefined, discountIn), { taxMode }); // always re-priced
       // Exchange edit trail: what the items looked like before this change
       if (dto.exchanges !== undefined && inv.exchanges?.length)
         push = { exchangeEdits: { at: new Date(), by: user.id, before: inv.exchanges } };
@@ -224,20 +239,20 @@ export class PosService {
   //   const cash = sum(payments.filter(p => p.mode === 'CASH'));
   //   if (!cash) return;
   //   if (cash + (await this.dairy.cashToday(customerId, session)) >= CASH_LIMIT_PAISE)
-  //     throw new BadRequestException('Cash receipts of ₹2,00,000 or more from one customer in a day are not permitted (Sec 269ST). Take the balance by UPI/card/bank transfer.');
+  //     throw new BadRequestException('Cash receipts of Ã¢â€šÂ¹2,00,000 or more from one customer in a day are not permitted (Sec 269ST). Take the balance by UPI/card/bank transfer.');
   // }
 
-  /** Atomic: re-price → check payments → number → stock → old-metal into raw inventory → lock. Any failure rolls everything back. */
+  /** Atomic: re-price Ã¢â€ â€™ check payments Ã¢â€ â€™ number Ã¢â€ â€™ stock Ã¢â€ â€™ old-metal into raw inventory Ã¢â€ â€™ lock. Any failure rolls everything back. */
   finalize(id: string, dto: FinalizeDto, user: AuthUser, opts: FinalizeOpts = {}) {
     return this.conn.transaction(async session => {
       const inv = await this.load(id, user, session);
       if (inv.status === 'FINAL') return inv; // safe retry
       if (inv.status !== 'DRAFT') throw new ConflictException('Invoice is cancelled');
       if (!inv.customerId) throw new BadRequestException('Customer is required before finalizing');
-      if ((await this.taxModeFor(String(inv.branchId))) !== (inv.taxMode ?? 'GST'))
-        throw new ConflictException({ code: 'TAX_MODE_CHANGED', message: "This branch's GST registration changed since the draft was saved. Re-save the draft to re-price it." });
 
-      const b = await this.build(inv.lines.map(l => ({ productId: String(l.productId), qty: l.qty })), toExInputs(inv.exchanges), inv.dairy ?? [], inv.advancePaise ?? 0, session, String(inv.customerId), inv.taxMode ?? 'GST', opts.asOf);
+      const b = await this.build(inv.lines.map(l => ({ productId: String(l.productId), qty: l.qty })), toExInputs(inv.exchanges),
+        inv.dairy ?? [], inv.advancePaise ?? 0, session, String(inv.customerId), inv.taxMode ?? 'GST',
+        opts.asOf, inv.totals?.discountPaise ?? 0);
       if (b.totals.finalPayable !== inv.totals.finalPayable || canonicalJson(b.lines) !== canonicalJson(inv.lines)
         || canonicalJson(b.exchanges) !== canonicalJson(inv.exchanges ?? []))
         throw new ConflictException({ code: 'PRICE_CHANGED', message: 'Prices or exchange rates changed since this draft was saved. Review and save the draft again.', quote: b });
@@ -280,15 +295,22 @@ export class PosService {
         dairyLedgerIds.push(await this.dairy.redeem({ schemeId: d.schemeId, amountPaise: d.amountPaise,
           customerId: String(inv.customerId), invoiceId: String(inv._id), invoiceNumber: number, actorId: user.id }, session));
 
-      // Customer accounts (separate from dairy): advance used, due created — same transaction
+      // Customer accounts (separate from dairy): advance used, due created Ã¢â‚¬â€ same transaction
       if (b.advancePaise)
         await this.accounts.useAdvance(String(inv.customerId), b.advancePaise, { invoiceId: String(inv._id), invoiceNumber: number, userId: user.id }, session);
       if (duePaise)
         await this.accounts.addDue(String(inv.customerId), duePaise, { invoiceId: String(inv._id), invoiceNumber: number, userId: user.id }, session);
 
       const finalizedAt = opts.finalizedAt ?? new Date();
-      const hash = computeHash({ number, type: 'SALE', taxMode: inv.taxMode ?? 'GST', branchId: inv.branchId, customerId: inv.customerId, lines: b.lines,
-        exchanges: b.exchanges, dairy: b.dairy, advancePaise: b.advancePaise, duePaise, totals: b.totals, payments: dto.payments, rates: b.rates, finalizedAt });
+
+      const hashInput = {
+        number, type: 'SALE', taxMode: inv.taxMode ?? 'GST',
+        branchId: inv.branchId, customerId: inv.customerId, lines: b.lines,
+        exchanges: b.exchanges, dairy: b.dairy, advancePaise: b.advancePaise,
+        duePaise, totals: b.totals, payments: dto.payments, rates: b.rates,
+        finalizedAt,
+      };
+      const hash = computeHash(hashInput);
       const done = await this.model.findOneAndUpdate({ _id: inv._id, status: 'DRAFT' }, {
         $set: { status: 'FINAL', locked: true, number, lines: b.lines, exchanges: b.exchanges, exchangeIds, dairy: b.dairy, dairyLedgerIds, advancePaise: b.advancePaise, duePaise,
           totals: b.totals, rates: b.rates, payments: dto.payments, finalizedAt, finalizedBy: new Types.ObjectId(user.id),
@@ -360,9 +382,9 @@ export class PosService {
 
   /**
    * The ONLY shape that may leave the building (PDF, share, print). Old metal appears as an amount and,
-   * only if the branch allows, the total fine weight (jama) — never gross/less/net weight, purity or rate.
+   * only if the branch allows, the total fine weight (jama) Ã¢â‚¬â€ never gross/less/net weight, purity or rate.
    */
-  
+
   /**
    * The ONLY shape that may leave the building (PDF, share, print).
    * Old metal appears as an amount and, only if the branch allows,
@@ -433,6 +455,7 @@ export class PosService {
       branch: {
         name: branch.name,
         address: branch.address,
+        whatsappNumber: branch.whatsappNumber,
         gstin: branch.gstin,
         state: branch.state,
         invoicePaper: branch.invoicePaper ?? 'A4',
@@ -440,6 +463,7 @@ export class PosService {
       ...customerInvoice,
       customer: customer
         ? {
+            id: String(customer._id),
             name: customer.name,
             mobile: customer.mobile,
             address: customer.address,
@@ -452,7 +476,7 @@ export class PosService {
   async pdfFor(id: string, user: AuthUser, size?: 'A4' | 'A5') {
     const inv = await this.load(id, user);
     if (inv.status === 'FINAL' && inv.contentHash && computeHash(inv.toObject()) !== inv.contentHash)
-      throw new ConflictException('Invoice integrity check failed — the stored invoice was altered. Contact the administrator.');
+      throw new ConflictException('Invoice integrity check failed Ã¢â‚¬â€ the stored invoice was altered. Contact the administrator.');
     const view = await this.customerView(id, user);
     const buffer = await this.pdf.render(this.pdf.invoiceDoc(view, inv.status === 'DRAFT', size ?? view.branch.invoicePaper));
     return { buffer, filename: `${inv.number ?? `DRAFT-${id}`}.pdf` };

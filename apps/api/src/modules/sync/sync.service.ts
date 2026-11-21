@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+﻿import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
@@ -28,7 +28,7 @@ const errText = (e: any) => String(e?.response?.message ?? e?.message ?? e);
  *  PUSH: operations from a device, applied in order, each idempotent by clientUuid. A sale is re-priced with the rates in force
  *        when it was made; if that differs from what the customer was charged it is kept as a DRAFT and flagged NEEDS_REVIEW.
  *        Stock may go negative (flagged). Official invoice numbers are issued here; the device's provisional number is kept.
- *  PULL: per-collection incremental download of master data (products, customers, rates, stock, dairy…).
+ *  PULL: per-collection incremental download of master data (products, customers, rates, stock, dairyÃ¢â‚¬Â¦).
  *  Masters: last write wins on the server; devices never push master edits, so there is nothing to merge from them.
  */
 @Injectable()
@@ -93,8 +93,8 @@ export class SyncService {
     if (!hasPermission(user.role, 'invoice.create') || !hasPermission(user.role, 'invoice.finalize')) throw new ForbiddenException('Not allowed to sell');
     if (user.role !== 'ADMIN' && !user.branchIds.includes(dto.branchId)) throw new ForbiddenException('Branch access denied');
     const asOf = new Date(dto.offlineAt), now = Date.now();
-    if (asOf.getTime() > now + MAX_FUTURE_MS) throw new BadRequestException('offlineAt is in the future — check the device clock');
-    if (asOf.getTime() < now - MAX_AGE_MS) throw new BadRequestException('offlineAt is older than 30 days — enter this sale manually');
+    if (asOf.getTime() > now + MAX_FUTURE_MS) throw new BadRequestException('offlineAt is in the future Ã¢â‚¬â€ check the device clock');
+    if (asOf.getTime() < now - MAX_AGE_MS) throw new BadRequestException('offlineAt is older than 30 days Ã¢â‚¬â€ enter this sale manually');
 
     let customerId = dto.customerId;
     if (!customerId && dto.customer) customerId = String((await this.customers.upsertByMobile(dto.customer, user.id)).customer._id);
@@ -102,7 +102,8 @@ export class SyncService {
 
     // Re-price with the rates that were in force when the sale was made (not today's)
     const draft: any = await this.pos.createDraft({ branchId: dto.branchId, customerId, lines: dto.lines, exchanges: dto.exchanges,
-      dairy: dto.dairy, advancePaise: dto.advancePaise, remarks: dto.remarks, clientUuid: op.clientUuid } as any, user, { asOf });
+      dairy: dto.dairy, advancePaise: dto.advancePaise, discountPaise: dto.discountPaise, taxMode: dto.taxMode,
+      remarks: dto.remarks, clientUuid: op.clientUuid } as any, user, { asOf });
     const base = { invoiceId: String(draft._id), provisionalNo: dto.provisionalNo };
     if (draft.totals.finalPayable !== dto.clientTotals.finalPayable)
       return { status: 'NEEDS_REVIEW', result: base, error: `Price differs: the device charged ${dto.clientTotals.finalPayable} paise, the server prices this sale at ${draft.totals.finalPayable} paise (rates as of the sale time). The draft is kept for review.` };
