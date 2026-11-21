@@ -3,7 +3,7 @@ import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { createHash } from 'crypto';
 import { ClientSession, Connection, Model, Types } from 'mongoose';
 import { AuthUser } from '@ajay/shared';
-import { CASH_LIMIT_PAISE } from '../../common/constants';
+//import { CASH_LIMIT_PAISE } from '../../common/constants';
 import { canonicalJson } from '../../common/utils/canonical-json';
 import { formatINR } from '../../common/utils/money';
 import { calculate, toCustomerInvoice } from '../../engines/pricing.engine';
@@ -220,12 +220,12 @@ export class PosService {
   }
 
   /** Cash today = bills + dairy deposits for this customer (Sec 269ST). */
-  private async assertCashLimit(payments: { mode: string; amountPaise: number }[], customerId: any, session: ClientSession) {
-    const cash = sum(payments.filter(p => p.mode === 'CASH'));
-    if (!cash) return;
-    if (cash + (await this.dairy.cashToday(customerId, session)) >= CASH_LIMIT_PAISE)
-      throw new BadRequestException('Cash receipts of ₹2,00,000 or more from one customer in a day are not permitted (Sec 269ST). Take the balance by UPI/card/bank transfer.');
-  }
+  // private async assertCashLimit(payments: { mode: string; amountPaise: number }[], customerId: any, session: ClientSession) {
+  //   const cash = sum(payments.filter(p => p.mode === 'CASH'));
+  //   if (!cash) return;
+  //   if (cash + (await this.dairy.cashToday(customerId, session)) >= CASH_LIMIT_PAISE)
+  //     throw new BadRequestException('Cash receipts of ₹2,00,000 or more from one customer in a day are not permitted (Sec 269ST). Take the balance by UPI/card/bank transfer.');
+  // }
 
   /** Atomic: re-price → check payments → number → stock → old-metal into raw inventory → lock. Any failure rolls everything back. */
   finalize(id: string, dto: FinalizeDto, user: AuthUser, opts: FinalizeOpts = {}) {
@@ -251,7 +251,7 @@ export class PosService {
           throw new BadRequestException(`Payments (${formatINR(received)}) + advance (${formatINR(b.advancePaise)}) must equal net payable (${formatINR(payable)}). To leave a balance as customer due, set allowDue.`);
         if (user.role === 'STAFF') throw new ForbiddenException('Only the owner or admin can sell on credit');
       }
-      await this.assertCashLimit(dto.payments, inv.customerId, session);
+      // await this.assertCashLimit(dto.payments, inv.customerId, session);
 
       const number = await this.nextNumber(inv.branchId, inv.taxMode === 'NON_GST' ? 'BOS' : 'INV', session);
       let negativeStock = false;

@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Connection, Model, Types } from 'mongoose';
 import { AuthUser } from '@ajay/shared';
-import { CASH_LIMIT_PAISE } from '../../common/constants';
+//import { CASH_LIMIT_PAISE } from '../../common/constants';
 import { escapeRegex } from '../../common/dto/page-query.dto';
 import { formatINR } from '../../common/utils/money';
 import { isoDate, istDayStart } from '../../common/utils/time';
@@ -126,8 +126,8 @@ export class DairyService {
       if (dto.amountPaise % s.monthlyPaise !== 0)
         throw new BadRequestException(`Amount must be a whole number of installments of ${formatINR(s.monthlyPaise)}`);
       const months = dto.amountPaise / s.monthlyPaise, target = s.monthlyPaise * s.durationMonths;
-      if (dto.mode === 'CASH' && (await this.cashToday(s.customerId, session)) + dto.amountPaise >= CASH_LIMIT_PAISE)
-        throw new BadRequestException('Cash receipts of ₹2,00,000 or more from one customer in a day are not permitted (Sec 269ST).');
+      // if (dto.mode === 'CASH' && (await this.cashToday(s.customerId, session)) + dto.amountPaise >= CASH_LIMIT_PAISE)
+       // throw new BadRequestException('Cash receipts of ₹2,00,000 or more from one customer in a day are not permitted (Sec 269ST).');
 
       const upd = await this.schemes.findOneAndUpdate({ _id: s._id, paidPaise: { $lte: target - dto.amountPaise } },
         { $inc: { paidPaise: dto.amountPaise, balancePaise: dto.amountPaise } }, { new: true, session });

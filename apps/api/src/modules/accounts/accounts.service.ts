@@ -2,7 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Connection, Model, Types } from 'mongoose';
 import { AuthUser } from '@ajay/shared';
-import { CASH_LIMIT_PAISE } from '../../common/constants';
+//import { CASH_LIMIT_PAISE } from '../../common/constants';
 import { financialYearCode } from '../../engines/numbering';
 import { BranchesService } from '../branches/branches.service';
 import { Counter } from '../catalog/counter.schema';
@@ -14,7 +14,7 @@ import { CustomerAccount, CustomerLedger, LedgerKind } from './account.schema';
 import { AccountAdjustDto, AdvanceDto, AdvanceRefundDto, DuePaymentDto, StatementQueryDto } from './dto/accounts.dto';
 
 const oid = (s: any) => new Types.ObjectId(String(s));
-const CASH_MSG = 'Cash receipts of ₹2,00,000 or more from one customer in a day are not permitted (Sec 269ST).';
+//const CASH_MSG = 'Cash receipts of ₹2,00,000 or more from one customer in a day are not permitted (Sec 269ST).';
 
 @Injectable()
 export class AccountsService {
@@ -57,8 +57,8 @@ export class AccountsService {
     await this.customers.findOne(customerId);
     await this.branches.assertAllExist([dto.branchId]);
     return this.conn.transaction(async session => {
-      if (dto.mode === 'CASH' && (await this.dairy.cashToday(customerId, session)) + dto.amountPaise >= CASH_LIMIT_PAISE)
-        throw new BadRequestException(CASH_MSG);
+      // if (dto.mode === 'CASH' && (await this.dairy.cashToday(customerId, session)) + dto.amountPaise >= CASH_LIMIT_PAISE)
+      //   throw new BadRequestException(CASH_MSG);
       const receiptNo = await this.nextNo(dto.branchId, 'AR', session);
       const a = await this.move(customerId, 'ADVANCE', dto.amountPaise, { kind: 'ADVANCE_RECEIPT', mode: dto.mode, ref: dto.ref,
         receiptNo, branchId: oid(dto.branchId), note: dto.note, createdBy: oid(user.id) }, session);
@@ -100,8 +100,8 @@ export class AccountsService {
     await this.customers.findOne(customerId);
     await this.branches.assertAllExist([dto.branchId]);
     return this.conn.transaction(async session => {
-      if (dto.mode === 'CASH' && (await this.dairy.cashToday(customerId, session)) + dto.amountPaise >= CASH_LIMIT_PAISE)
-        throw new BadRequestException(CASH_MSG);
+      // if (dto.mode === 'CASH' && (await this.dairy.cashToday(customerId, session)) + dto.amountPaise >= CASH_LIMIT_PAISE)
+        // throw new BadRequestException(CASH_MSG);
       const receiptNo = await this.nextNo(dto.branchId, 'PR', session);
       const a = await this.move(customerId, 'DUE', -dto.amountPaise, { kind: 'DUE_PAYMENT', mode: dto.mode, ref: dto.ref,
         receiptNo, branchId: oid(dto.branchId), createdBy: oid(user.id) }, session);

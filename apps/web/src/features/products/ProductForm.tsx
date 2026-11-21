@@ -20,10 +20,56 @@ export function ProductForm() {
   const { id } = useParams(), [sp] = useSearchParams(), nav = useNavigate(), qc = useQueryClient();
   const role = useAuth(s => s.user!.role), branch = useActiveBranch(), { data: branches } = useBranches();
   const canWrite = hasPermission(role, 'product.write'), canStock = hasPermission(role, 'inventory.write');
+  
   const [f, setF] = useState<F>(blank), [qr, setQr] = useState(''), [tag, setTag] = useState(false), [err, setErr] = useState('');
+  const [showNewCategory, setShowNewCategory] = useState(false);
+  const [showNewSubcategory, setShowNewSubcategory] = useState(false);
+  const [newCategory, setNewCategory] = useState('');
+  const [newSubcategory, setNewSubcategory] = useState('');
+
   const set = (k: keyof F, v: string) => setF(x => ({ ...x, [k]: v }));
 
   const cats = useQuery({ queryKey: ['categories'], queryFn: () => api<any[]>('/categories') });
+  const addCategory = useMutation({
+  mutationFn: () => api<any>('/categories', {
+    method: 'POST',
+    body: { name: newCategory.trim() },
+  }),
+  onSuccess: async (created) => {
+    await cats.refetch();
+    setF(x => ({
+      ...x,
+      categoryId: created._id,
+      subcategoryId: '',
+    }));
+    setNewCategory('');
+    setShowNewCategory(false);
+    setErr('');
+  },
+  onError: e => setErr((e as Error).message),
+});
+
+const addSubcategory = useMutation({
+  mutationFn: () => api<any>('/subcategories', {
+    method: 'POST',
+    body: {
+      name: newSubcategory.trim(),
+      categoryId: f.categoryId,
+    },
+  }),
+  onSuccess: async (created) => {
+    await cats.refetch();
+    setF(x => ({
+      ...x,
+      subcategoryId: created._id,
+    }));
+    setNewSubcategory('');
+    setShowNewSubcategory(false);
+    setErr('');
+  },
+  onError: e => setErr((e as Error).message),
+});
+
   const product = useQuery({ queryKey: ['product', id], queryFn: () => api(`/products/${id}`), enabled: !!id });
   const p = product.data;
   useEffect(() => {
@@ -79,8 +125,103 @@ export function ProductForm() {
       <form className="mt-6 grid gap-5 sm:grid-cols-2" onSubmit={e => { e.preventDefault(); save.mutate(); }}>
         <Field label="Name"><Input disabled={dis} value={f.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Gold Chain 22K" autoFocus={!id} /></Field>
         <Field label="Name on the tag" hint="Short, up to about 16 letters. Leave empty to use the start of the name."><Input disabled={dis} value={f.shortName} onChange={e => set('shortName', e.target.value)} maxLength={20} /></Field>
-        <Field label="Category"><select disabled={dis} className={inputCls} value={f.categoryId} onChange={e => setF(x => ({ ...x, categoryId: e.target.value, subcategoryId: '' }))}><option value="">Choose…</option>{cats.data?.map(c => <option key={c._id} value={c._id}>{c.name}</option>)}</select></Field>
-        <Field label="Type"><select disabled={dis || !f.categoryId} className={inputCls} value={f.subcategoryId} onChange={e => set('subcategoryId', e.target.value)}><option value="">Choose…</option>{subs.map((c: any) => <option key={c._id} value={c._id}>{c.name}</option>)}</select></Field>
+       <div>
+  <Field label="Category">
+    <select
+      disabled={dis}
+      className={inputCls}
+      value={f.categoryId}
+      onChange={e => setF(x => ({
+        ...x,
+        categoryId: e.target.value,
+        subcategoryId: '',
+      }))}
+    >
+      <option value="">Choose…</option>
+      {cats.data?.map(c => (
+        <option key={c._id} value={c._id}>{c.name}</option>
+      ))}
+    </select>
+  </Field>
+
+  {canWrite && (
+    <button
+      type="button"
+      className="mt-2 text-sm text-gold-deep underline"
+      onClick={() => setShowNewCategory(v => !v)}
+    >
+      + Add new category
+    </button>
+  )}
+
+  {showNewCategory && (
+    <div className="mt-2 rounded-lg border border-line p-3">
+      <Field label="New category name">
+        <Input
+          value={newCategory}
+          onChange={e => setNewCategory(e.target.value)}
+          placeholder="e.g. Necklace"
+        />
+      </Field>
+      <Button
+        type="button"
+        className="mt-2"
+        disabled={newCategory.trim().length < 2}
+        busy={addCategory.isPending}
+        onClick={() => addCategory.mutate()}
+      >
+        Save category
+      </Button>
+    </div>
+  )}
+</div>
+
+<div>
+  <Field label="Subcategory">
+    <select
+      disabled={dis || !f.categoryId}
+      className={inputCls}
+      value={f.subcategoryId}
+      onChange={e => set('subcategoryId', e.target.value)}
+    >
+      <option value="">Choose…</option>
+      {subs.map((c: any) => (
+        <option key={c._id} value={c._id}>{c.name}</option>
+      ))}
+    </select>
+  </Field>
+
+  {canWrite && f.categoryId && (
+    <button
+      type="button"
+      className="mt-2 text-sm text-gold-deep underline"
+      onClick={() => setShowNewSubcategory(v => !v)}
+    >
+      + Add new subcategory
+    </button>
+  )}
+
+  {showNewSubcategory && (
+    <div className="mt-2 rounded-lg border border-line p-3">
+      <Field label="New subcategory name">
+        <Input
+          value={newSubcategory}
+          onChange={e => setNewSubcategory(e.target.value)}
+          placeholder="e.g. Chain"
+        />
+      </Field>
+      <Button
+        type="button"
+        className="mt-2"
+        disabled={newSubcategory.trim().length < 2}
+        busy={addSubcategory.isPending}
+        onClick={() => addSubcategory.mutate()}
+      >
+        Save subcategory
+      </Button>
+    </div>
+  )}
+</div>
         <Field label="Metal"><select disabled={dis} className={inputCls} value={f.metal} onChange={e => set('metal', e.target.value)}><option value="GOLD">Gold</option><option value="SILVER">Silver</option><option value="DIAMOND">Diamond</option></select></Field>
         {f.metal === 'GOLD'
           ? <Field label="Karat" hint="Decides which gold rate prices this piece"><select disabled={dis} className={inputCls} value={f.karat} onChange={e => set('karat', e.target.value)}><option value="24">24K (100%)</option><option value="22">22K (91.6%)</option><option value="18">18K (75%)</option></select></Field>

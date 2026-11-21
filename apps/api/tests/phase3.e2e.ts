@@ -107,16 +107,24 @@ describe('Phase 3 – quote, search, customers', () => {
 });
 
 describe('Phase 3 – finalize (atomic, numbered, locked)', () => {
-  it('enforces the cash limit, then finalizes with split payments', async () => {
-    invA = (await draft(staff, 3).expect(201)).body._id;
-    const bad = await finalize(staff, invA, [{ mode: 'CASH', amountPaise: THREE }]).expect(400);
-    expect(bad.body.message).toMatch(/269ST/);
-    expect(await stockQty()).toBe(5);                                    // rolled back
-    const ok = await finalize(staff, invA, [{ mode: 'CASH', amountPaise: 10_000_000 }, { mode: 'UPI', amountPaise: THREE - 10_000_000 }]).expect(200);
-    expect(ok.body).toMatchObject({ status: 'FINAL', locked: true, number: formatDocNumber('RNC1', fy, 1) });
-    expect(ok.body.contentHash).toHaveLength(64);
-    expect(await stockQty()).toBe(2);
+ it('allows a cash payment of ₹2 lakh or more and finalizes the invoice', async () => {
+  invA = (await draft(staff, 3).expect(201)).body._id;
+
+  const ok = await finalize(
+    staff,
+    invA,
+    [{ mode: 'CASH', amountPaise: THREE }],
+  ).expect(200);
+
+  expect(ok.body).toMatchObject({
+    status: 'FINAL',
+    locked: true,
+    number: formatDocNumber('RNC1', fy, 1),
   });
+
+  expect(ok.body.contentHash).toHaveLength(64);
+  expect(await stockQty()).toBe(2);
+});
 
   it('insufficient stock aborts everything and leaves the draft intact', async () => {
     const id = (await draft(staff, 3).expect(201)).body._id;

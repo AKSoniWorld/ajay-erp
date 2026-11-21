@@ -47,8 +47,8 @@ export function CustomerPage() {
       </div>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Tile label="Advance we hold"><Money paise={a?.advance.balancePaise ?? 0} /></Tile>
-        <Tile label="They owe us"><span className={(a?.due.balancePaise ?? 0) > 0 ? 'text-warn' : ''}><Money paise={a?.due.balancePaise ?? 0} /></span></Tile>
+        <Tile label="Jama (Advance)"><Money paise={a?.advance.balancePaise ?? 0} /></Tile>
+        <Tile label="Baaki (Due)"><span className={(a?.due.balancePaise ?? 0) > 0 ? 'text-warn' : ''}><Money paise={a?.due.balancePaise ?? 0} /></span></Tile>
         <Tile label="Dairy savings" sub={a?.dairy.schemes.length ? a.dairy.schemes.map((s: any) => <Link key={s.schemeId} to={`/dairy/${s.schemeId}`} className="mr-2 underline">{s.schemeNo}</Link>) : 'No scheme'}><Money paise={a?.dairy.balancePaise ?? 0} /></Tile>
         <Tile label="Total purchases" sub={`${a?.purchases.invoiceCount ?? 0} bills · returns ${formatINR(a?.purchases.returnsPaise ?? 0, { decimals: false })}`}><Money paise={a?.purchases.totalPaise ?? 0} decimals={false} /></Tile>
       </div>

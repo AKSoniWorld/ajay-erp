@@ -60,11 +60,27 @@ describe('Customer accounts – advance', () => {
     expect(await account(staff)).toMatchObject({ advance: { balancePaise: 2_000_000 }, due: { balancePaise: 0 },
       dairy: { balancePaise: 0, schemes: [] }, purchases: { invoiceCount: 0, totalPaise: 0 } });
   });
-  it('cash advances count toward the ₹2 lakh daily limit', async () => {
-    const r = await http().post(`/api/v1/customers/${anita}/advance`).set(auth(staff))
-      .send({ branchId: branchA, amountPaise: 20_000_000, mode: 'CASH' }).expect(400);
-    expect(r.body.message).toMatch(/269ST/);
-  });
+ it('allows a cash advance of ₹2 lakh or more', async () => {
+  const customer = (
+    await http().post('/api/v1/customers')
+      .set(auth(staff))
+      .send({ name: 'High Cash Customer', mobile: '9000000099' })
+      .expect(201)
+  ).body._id;
+
+  const r = await http()
+    .post(`/api/v1/customers/${customer}/advance`)
+    .set(auth(staff))
+    .send({
+      branchId: branchA,
+      amountPaise: 20_000_000,
+      mode: 'CASH',
+    })
+    .expect(201);
+
+  expect(r.body.advancePaise).toBe(20_000_000);
+});
+
   it('can be applied on a bill, but never more than the balance or the bill', async () => {
     const q = (extra: any) => http().post('/api/v1/pos/quote').set(auth(staff)).send({ branchId: branchA, lines: [{ productId: chain }], ...extra });
     expect((await q({ customerId: anita, advancePaise: 2_000_000 }).expect(200)).body.totals.finalPayable).toBe(BILL);
