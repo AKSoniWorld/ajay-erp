@@ -27,9 +27,9 @@ export const netMg = (e: ExchangeItem) => {
   if (e.lessMg < 0 || e.lessMg > e.grossMg) throw new Error('Invalid less weight');
   return e.grossMg - e.lessMg;
 };
-/** Fine weight (mg) = net weight Ã— purity %. */
+/** Fine weight (mg) = net weight ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â purity %. */
 export const fineMg = (e: ExchangeItem) => Math.round((netMg(e) * e.purityPct) / 100);
-/** Old-metal value = fine weight Ã— exchange rate. */
+/** Old-metal value = fine weight ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â exchange rate. */
 export const exchangeValue = (e: ExchangeItem): Paise => Math.round((fineMg(e) * e.ratePerGramPaise) / 1000);
 
 export function calculate(input: PricingInput) {
@@ -38,14 +38,68 @@ export function calculate(input: PricingInput) {
   const making = input.lines.reduce((s, l) => s + l.making, 0);
   const taxableBeforeDiscount = jewellery + making;
   const discountPaise = input.discountPaise ?? 0;
+
   if (!Number.isSafeInteger(discountPaise) || discountPaise < 0)
     throw new Error('Discount must be a non-negative whole amount in paise');
-  if (discountPaise > taxableBeforeDiscount)
-    throw new Error('Discount cannot exceed the taxable bill amount');
-  const taxable = taxableBeforeDiscount - discountPaise;
-  const gst = Math.round((taxable * gstRate) / 100);
-  const cgst = Math.floor(gst / 2), sgst = gst - cgst; // intra-state (Jharkhand)
+
+  const gstFor = (base: number) => Math.round((base * gstRate) / 100);
+  const grossFor = (base: number) => base + gstFor(base);
+  const originalGrossTotal = grossFor(taxableBeforeDiscount);
+
+  if (discountPaise > originalGrossTotal)
+    throw new Error('Discount cannot exceed the gross bill amount');
+
+  // Find the closest taxable base whose GST-inclusive amount matches the target.
+  // On a one-paise tie, prefer the higher payable amount rather than over-discounting.
+  const closestBaseForGross = (min: number, max: number, target: number) => {
+    let lo = min, hi = max, best = min;
+    while (lo <= hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      const amount = grossFor(mid);
+      const bestAmount = grossFor(best);
+      if (Math.abs(amount - target) < Math.abs(bestAmount - target) ||
+        (Math.abs(amount - target) === Math.abs(bestAmount - target) && amount > bestAmount)) {
+        best = mid;
+      }
+      if (amount < target) lo = mid + 1;
+      else if (amount > target) hi = mid - 1;
+      else return mid;
+    }
+    for (const candidate of [lo, hi]) {
+      if (candidate < min || candidate > max) continue;
+      const amount = grossFor(candidate);
+      const bestAmount = grossFor(best);
+      if (Math.abs(amount - target) < Math.abs(bestAmount - target) ||
+        (Math.abs(amount - target) === Math.abs(bestAmount - target) && amount > bestAmount)) {
+        best = candidate;
+      }
+    }
+    return best;
+  };
+
+  let jewelleryAfterDiscount = jewellery;
+  let makingAfterDiscount = making;
+  const grossAfterRemovingAllMaking = grossFor(jewellery);
+  const makingDiscountCapacity = originalGrossTotal - grossAfterRemovingAllMaking;
+
+  if (discountPaise <= makingDiscountCapacity) {
+    // Discount is absorbed by making charges first.
+    makingAfterDiscount = closestBaseForGross(0, making, grossFor(making) - discountPaise);
+  } else {
+    // Making is fully removed; any remaining discount reduces product value.
+    makingAfterDiscount = 0;
+    const remainingProductDiscount = discountPaise - makingDiscountCapacity;
+    jewelleryAfterDiscount = closestBaseForGross(0, jewellery, grossFor(jewellery) - remainingProductDiscount);
+  }
+
+  const makingDiscountPaise = making - makingAfterDiscount;
+  const productDiscountPaise = jewellery - jewelleryAfterDiscount;
+  const discountTaxablePaise = makingDiscountPaise + productDiscountPaise;
+  const taxable = jewelleryAfterDiscount + makingAfterDiscount;
+  const gst = gstFor(taxable);
+  const cgst = Math.floor(gst / 2), sgst = gst - cgst;
   const grossTotal = taxable + gst;
+  const discountAppliedPaise = originalGrossTotal - grossTotal;
 
   const ex = input.exchanges ?? [];
   const goldExchange = ex.filter(e => e.metal === 'GOLD').reduce((s, e) => s + exchangeValue(e), 0);
@@ -56,19 +110,21 @@ export function calculate(input: PricingInput) {
   if (dairy < 0) throw new Error('Dairy adjustment cannot be negative');
   if (dairy > (input.dairyAvailable ?? 0)) throw new Error('Dairy adjustment exceeds ledger balance');
   if (dairy > Math.max(subtotal, 0)) throw new Error('Dairy adjustment exceeds payable');
+
   const exactPayable = subtotal - dairy;
-  // Round-off: final payable is always whole rupees (>= 50 paise rounds up). Difference shown as a line.
   const finalPayable = roundToRupee(exactPayable);
-  const roundOff = finalPayable - exactPayable; // paise, can be negative
+  const roundOff = finalPayable - exactPayable;
 
   return {
-    jewellery, making, taxableBeforeDiscount, discountPaise, taxable, gstRate, cgst, sgst, gst, grossTotal,
+    jewellery, making, taxableBeforeDiscount, discountPaise, discountAppliedPaise,
+    makingAfterDiscount, jewelleryAfterDiscount, makingDiscountPaise, productDiscountPaise,
+    discountTaxablePaise, taxable, gstRate, cgst, sgst, gst, grossTotal,
     goldExchange, silverExchange, subtotal, dairy, exactPayable, roundOff, finalPayable,
-    exchangeDetail: ex.map(e => ({ ...e, netMg: netMg(e), fineMg: fineMg(e), value: exchangeValue(e) })), // INTERNAL ONLY
+    exchangeDetail: ex.map(e => ({ ...e, netMg: netMg(e), fineMg: fineMg(e), value: exchangeValue(e) })),
   };
 }
 
-/** Backend-enforced whitelist: nothing about weight, rate or dairy breakdown can leak. */
+/** Backend-enforced whitelist: nothing about internal rates or dairy breakdown can leak. */
 export function toCustomerInvoice(r: ReturnType<typeof calculate>, lines: InvoiceLine[],
   meta: { customer: string; remarks?: string },
   opts: { exchangeDisplay?: 'AMOUNT' | 'AMOUNT_AND_FINE_WEIGHT'; goldFineMg?: number; silverFineMg?: number;
@@ -86,16 +142,21 @@ export function toCustomerInvoice(r: ReturnType<typeof calculate>, lines: Invoic
     })),
     taxableBeforeDiscount: r.taxableBeforeDiscount,
     discountPaise: r.discountPaise,
+    discountAppliedPaise: r.discountAppliedPaise,
+    makingAfterDiscount: r.makingAfterDiscount,
+    jewelleryAfterDiscount: r.jewelleryAfterDiscount,
+    makingDiscountPaise: r.makingDiscountPaise,
+    productDiscountPaise: r.productDiscountPaise,
+    discountTaxablePaise: r.discountTaxablePaise,
     taxable: r.taxable,
     gst: { cgst: r.cgst, sgst: r.sgst, total: r.gst, ratePct: r.gstRate },
-    oldGoldExchange: r.goldExchange,     // amount only
-    oldSilverExchange: r.silverExchange, // amount only
-    // Optional per-branch: total FINE weight ("jama") only â€” never gross/less/net weight, purity or rate.
+    oldGoldExchange: r.goldExchange,
+    oldSilverExchange: r.silverExchange,
     ...(opts.exchangeDisplay === 'AMOUNT_AND_FINE_WEIGHT' &&
       { oldGoldFineWeightMg: opts.goldFineMg ?? 0, oldSilverFineWeightMg: opts.silverFineMg ?? 0 }),
-    dairyAdjustment: r.dairy,            // amount only
-    roundOff: r.roundOff,                // signed paise, e.g. -40 or +60
+    dairyAdjustment: r.dairy,
+    roundOff: r.roundOff,
     ...(opts.settlement && { advanceAdjusted: opts.settlement.advance, amountReceived: opts.settlement.received, balanceDue: opts.settlement.due }),
-    netPayable: r.finalPayable,          // whole rupees
+    netPayable: r.finalPayable,
   };
 }

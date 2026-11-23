@@ -6,7 +6,7 @@ export interface DocOpts { symbol: string; font: string; draft?: boolean; paper?
 /** Printable width in points (A4 = 595pt, A5 = 420pt wide, i.e. half of A4) and page margins. */
 const LAYOUT = { A4: { width: 539, margins: [28, 28, 28, 44] }, A5: { width: 375, margins: [22, 22, 22, 38] } } as const;
 
-/** â‚¹ 1,23,456.00 â€” symbol is "â‚¹" when the embedded font has it, otherwise "Rs.". */
+/** Ã¢â€šÂ¹ 1,23,456.00 Ã¢â‚¬â€ symbol is "Ã¢â€šÂ¹" when the embedded font has it, otherwise "Rs.". */
 export const inr = (paise: number, symbol: string) =>
   `${paise < 0 ? '-' : ''}${symbol} ${(Math.abs(paise) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const dateStr = (d: any) => new Date(d).toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata' });
@@ -38,14 +38,15 @@ export function buildInvoiceDoc(view: any, o: DocOpts) {
   const items: any[] = view.items;
   const taxableBeforeDiscount = view.taxableBeforeDiscount ?? items.reduce((s, i) => s + i.amount, 0);
   const discountPaise = view.discountPaise ?? 0;
-  const taxable = view.taxable ?? (taxableBeforeDiscount - discountPaise);
+  const discountDisplayPaise = view.discountAppliedPaise ?? discountPaise;
+  const taxable = view.taxable ?? (taxableBeforeDiscount - (view.discountTaxablePaise ?? discountPaise));
   const half = String(view.gst.ratePct / 2);
   const code = STATE_CODES[br.state ?? ''] ?? '';
 
   const totals: any[] = [
     row('Taxable value', m(taxableBeforeDiscount)),
-    ...(discountPaise ? [row('Less: Discount', m(-discountPaise))] : []),
-    ...(discountPaise ? [row('Taxable after discount', m(taxable), { bold: true })] : []),
+    ...(discountDisplayPaise ? [row(nonGst ? 'Less: Discount' : 'Less: Discount (incl. GST)', m(-discountDisplayPaise))] : []),
+    ...(discountDisplayPaise ? [row('Taxable after discount', m(taxable), { bold: true })] : []),
     ...(nonGst ? [
       row('Total', m(taxable), { bold: true }),
     ] : [
@@ -89,7 +90,7 @@ export function buildInvoiceDoc(view: any, o: DocOpts) {
           ...(cu?.mobile ? [{ text: `Mobile: ${cu.mobile}` }] : []),
           ...(cu?.address ? [{ text: cu.address }] : [])] },
         { width: 'auto', stack: [
-          { text: `${isCN ? 'Credit note' : 'Invoice'} no: ${doc.number ?? 'â€”'}`, bold: true, alignment: 'right' },
+          { text: `${isCN ? 'Credit note' : 'Invoice'} no: ${doc.number ?? 'Ã¢â‚¬â€'}`, bold: true, alignment: 'right' },
           { text: `Date: ${dateStr(doc.date)}`, alignment: 'right' },
           ...(nonGst ? [] : [{ text: `Place of supply: ${br.state ?? ''}${code ? ` (${code})` : ''}`, alignment: 'right' }]),
           ...(doc.againstInvoice ? [{ text: `Against invoice: ${doc.againstInvoice}`, alignment: 'right' }] : [])] },

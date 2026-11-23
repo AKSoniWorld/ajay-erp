@@ -49,4 +49,51 @@ describe('shared pricing = server pricing', () => {
     expect(buildQuote({ ...base, taxMode: 'NON_GST' }).totals).toMatchObject({ gst: 0, finalPayable: 7_500_000 });
     expect(() => buildQuote({ ...base, saleRates: {} })).toThrow('GOLD 22K sale rate not set');
   });
+
+  it('applies GST-inclusive discounts to making first, then product value', () => {
+    const parity = (input: any) => {
+      const shared = calculate(input);
+      const { exchangeDetail, ...server } = apiCalculate(input);
+      void exchangeDetail;
+      expect(server).toEqual(shared);
+      return shared;
+    };
+
+    const lines = [
+      { name: 'Gold Jewellery', sku: 'G-1', metalValue: 1_000_000, making: 200_000 },
+    ];
+
+    // Original gross: ₹12,360. Gross discount: ₹360. Final gross: ₹12,000.
+    const makingFirst = parity({ lines, gstRatePct: 3, discountPaise: 36_000 });
+    expect(makingFirst).toMatchObject({
+      taxableBeforeDiscount: 1_200_000,
+      discountAppliedPaise: 36_000,
+      jewelleryAfterDiscount: 1_000_000,
+      productDiscountPaise: 0,
+      grossTotal: 1_200_000,
+    });
+    expect(makingFirst.makingAfterDiscount).toBeLessThan(200_000);
+    expect(makingFirst.makingAfterDiscount).toBeGreaterThan(0);
+
+    // Discount exceeds the gross making-charge capacity; product value absorbs the remainder.
+    const productFallback = parity({ lines, gstRatePct: 3, discountPaise: 250_000 });
+    expect(productFallback.makingAfterDiscount).toBe(0);
+    expect(productFallback.productDiscountPaise).toBeGreaterThan(0);
+    expect(productFallback.discountAppliedPaise).toBeCloseTo(250_000, 0);
+
+    // Without GST, the discount is deducted directly from making charges.
+    const withoutGst = parity({ lines, gstRatePct: 0, discountPaise: 36_000 });
+    expect(withoutGst).toMatchObject({
+      gst: 0,
+      jewelleryAfterDiscount: 1_000_000,
+      makingAfterDiscount: 164_000,
+      discountAppliedPaise: 36_000,
+      grossTotal: 1_164_000,
+    });
+
+    // A discount greater than the original GST-inclusive bill must be rejected.
+    const excessive = { lines, gstRatePct: 3, discountPaise: 1_236_001 };
+    expect(() => calculate(excessive)).toThrow('Discount cannot exceed the gross bill amount');
+    expect(() => apiCalculate(excessive)).toThrow('Discount cannot exceed the gross bill amount');
+  });
 });

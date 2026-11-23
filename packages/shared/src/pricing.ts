@@ -10,7 +10,7 @@ export interface PricedProduct {
   metal: 'GOLD' | 'SILVER' | 'DIAMOND'; netMg: number;
   makingType: 'PER_GRAM' | 'FLAT' | 'PERCENT'; makingValue: number; stoneValuePaise?: number;
 }
-/** metal value = net weight (g) Ã— sale rate of the item's grade (no purity %); making: per gram on net weight / flat / % (basis points) of metal value. */
+/** metal value = net weight (g) Ãƒâ€” sale rate of the item's grade (no purity %); making: per gram on net weight / flat / % (basis points) of metal value. */
 export function priceLine(p: PricedProduct, qty: number, ratePerGramPaise?: number, rateLabel: string = p.metal) {
   if (!Number.isInteger(qty) || qty < 1) throw new Error('qty must be a positive integer');
   let metalUnit = 0;
@@ -31,9 +31,9 @@ export const netMgOf = (e: ExchangeItem) => {
   if (e.lessMg < 0 || e.lessMg > e.grossMg) throw new Error('Invalid less weight');
   return e.grossMg - e.lessMg;
 };
-/** Fine weight (mg) = net weight Ã— purity %. */
+/** Fine weight (mg) = net weight Ãƒâ€” purity %. */
 export const fineMgOf = (e: ExchangeItem) => Math.round((netMgOf(e) * e.purityPct) / 100);
-/** Old-metal value = fine weight Ã— exchange rate. */
+/** Old-metal value = fine weight Ãƒâ€” exchange rate. */
 export const exchangeValueOf = (e: ExchangeItem): Paise => Math.round((fineMgOf(e) * e.ratePerGramPaise) / 1000);
 
 /** Gold is valued at the 22K EXCHANGE rate, silver at the silver EXCHANGE rate. */
@@ -63,40 +63,99 @@ export interface PricingInput {
   gstRatePct?: number; exchanges?: ExchangeItem[]; dairyAdjustment?: Paise; dairyAvailable?: Paise;
   discountPaise?: Paise;
 }
-/** Order: jewellery + making + GST âˆ’ old gold âˆ’ old silver = subtotal; âˆ’ dairy = payable; rounded to whole rupees (difference = roundOff). */
+/** Order: jewellery + making + GST Ã¢Ë†â€™ old gold Ã¢Ë†â€™ old silver = subtotal; Ã¢Ë†â€™ dairy = payable; rounded to whole rupees (difference = roundOff). */
 export function calculate(input: PricingInput) {
   const gstRate = input.gstRatePct ?? 3;
   const jewellery = input.lines.reduce((s, l) => s + l.metalValue, 0);
   const making = input.lines.reduce((s, l) => s + l.making, 0);
   const taxableBeforeDiscount = jewellery + making;
   const discountPaise = input.discountPaise ?? 0;
+
   if (!Number.isSafeInteger(discountPaise) || discountPaise < 0)
     throw new Error('Discount must be a non-negative whole amount in paise');
-  if (discountPaise > taxableBeforeDiscount)
-    throw new Error('Discount cannot exceed the taxable bill amount');
-  const taxable = taxableBeforeDiscount - discountPaise;
-  const gst = Math.round((taxable * gstRate) / 100);
+
+  const gstFor = (base: number) => Math.round((base * gstRate) / 100);
+  const grossFor = (base: number) => base + gstFor(base);
+  const originalGrossTotal = grossFor(taxableBeforeDiscount);
+
+  if (discountPaise > originalGrossTotal)
+    throw new Error('Discount cannot exceed the gross bill amount');
+
+  const closestBaseForGross = (min: number, max: number, target: number) => {
+    let lo = min, hi = max, best = min;
+    while (lo <= hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      const amount = grossFor(mid);
+      const bestAmount = grossFor(best);
+      if (Math.abs(amount - target) < Math.abs(bestAmount - target) ||
+        (Math.abs(amount - target) === Math.abs(bestAmount - target) && amount > bestAmount)) {
+        best = mid;
+      }
+      if (amount < target) lo = mid + 1;
+      else if (amount > target) hi = mid - 1;
+      else return mid;
+    }
+    for (const candidate of [lo, hi]) {
+      if (candidate < min || candidate > max) continue;
+      const amount = grossFor(candidate);
+      const bestAmount = grossFor(best);
+      if (Math.abs(amount - target) < Math.abs(bestAmount - target) ||
+        (Math.abs(amount - target) === Math.abs(bestAmount - target) && amount > bestAmount)) {
+        best = candidate;
+      }
+    }
+    return best;
+  };
+
+  let jewelleryAfterDiscount = jewellery;
+  let makingAfterDiscount = making;
+  const grossAfterRemovingAllMaking = grossFor(jewellery);
+  const makingDiscountCapacity = originalGrossTotal - grossAfterRemovingAllMaking;
+
+  if (discountPaise <= makingDiscountCapacity) {
+    makingAfterDiscount = closestBaseForGross(0, making, grossFor(making) - discountPaise);
+  } else {
+    makingAfterDiscount = 0;
+    const remainingProductDiscount = discountPaise - makingDiscountCapacity;
+    jewelleryAfterDiscount = closestBaseForGross(0, jewellery, grossFor(jewellery) - remainingProductDiscount);
+  }
+
+  const makingDiscountPaise = making - makingAfterDiscount;
+  const productDiscountPaise = jewellery - jewelleryAfterDiscount;
+  const discountTaxablePaise = makingDiscountPaise + productDiscountPaise;
+  const taxable = jewelleryAfterDiscount + makingAfterDiscount;
+  const gst = gstFor(taxable);
   const cgst = Math.floor(gst / 2), sgst = gst - cgst;
   const grossTotal = taxable + gst;
+  const discountAppliedPaise = originalGrossTotal - grossTotal;
+
   const ex = input.exchanges ?? [];
   const goldExchange = ex.filter(e => e.metal === 'GOLD').reduce((s, e) => s + exchangeValueOf(e), 0);
   const silverExchange = ex.filter(e => e.metal === 'SILVER').reduce((s, e) => s + exchangeValueOf(e), 0);
   const subtotal = grossTotal - goldExchange - silverExchange;
+
   const dairy = input.dairyAdjustment ?? 0;
   if (dairy < 0) throw new Error('Dairy adjustment cannot be negative');
   if (dairy > (input.dairyAvailable ?? 0)) throw new Error('Dairy adjustment exceeds ledger balance');
   if (dairy > Math.max(subtotal, 0)) throw new Error('Dairy adjustment exceeds payable');
+
   const exactPayable = subtotal - dairy;
   const finalPayable = roundToRupee(exactPayable);
-  return { jewellery, making, taxableBeforeDiscount, discountPaise, taxable, gstRate, cgst, sgst, gst, grossTotal, goldExchange, silverExchange, subtotal, dairy,
-    exactPayable, roundOff: finalPayable - exactPayable, finalPayable };
+
+  return {
+    jewellery, making, taxableBeforeDiscount, discountPaise, discountAppliedPaise,
+    makingAfterDiscount, jewelleryAfterDiscount, makingDiscountPaise, productDiscountPaise,
+    discountTaxablePaise, taxable, gstRate, cgst, sgst, gst, grossTotal,
+    goldExchange, silverExchange, subtotal, dairy, exactPayable,
+    roundOff: finalPayable - exactPayable, finalPayable,
+  };
 }
 
 export interface QuoteProduct {
   _id: string; name: string; sku: string; hsn?: string; metal: 'GOLD' | 'SILVER' | 'DIAMOND'; karat?: number; purityPct: number;
   grossMg: number; netMg: number; makingType: 'PER_GRAM' | 'FLAT' | 'PERCENT'; makingValue: number; stoneValuePaise?: number; active?: boolean;
 }
-/** The same quote the server's POS builds (lines, totals, priced old metal) â€” used while offline. Throws the server's messages. */
+/** The same quote the server's POS builds (lines, totals, priced old metal) Ã¢â‚¬â€ used while offline. Throws the server's messages. */
 export function buildQuote(a: {
   products: Record<string, QuoteProduct>; saleRates: RateMap; exchangeRates: RateMap;
   lines: { productId: string; qty?: number }[]; exchanges?: ExchangeInput[];
